@@ -2,20 +2,22 @@ package cfb.iss;
 
 import cfb.curl.Curl;
 
-import java.util.Arrays;
-
 /**
  * (c) 2016 Come-from-Beyond
  */
 public class ISS {
 
-    public static final int NUMBER_OF_FRAGMENT_CHUNKS = 27;
-    public static final int FRAGMENT_LENGTH = Curl.HASH_LENGTH * NUMBER_OF_FRAGMENT_CHUNKS;
-    public static final int NUMBER_OF_SECURITY_LEVELS = 3;
-
     private static final int MIN_TRIT_VALUE = -1, MAX_TRIT_VALUE = 1;
     private static final int TRYTE_WIDTH = 3;
     private static final int MIN_TRYTE_VALUE = -13, MAX_TRYTE_VALUE = 13;
+    private static final int SUBSEED_LENGTH = Curl.HASH_LENGTH;
+    private static final int KEY_LENGTH = (Curl.HASH_LENGTH / TRYTE_WIDTH + 1) * Curl.HASH_LENGTH;
+    private static final int DIGEST_LENGTH = Curl.HASH_LENGTH;
+    private static final int ADDRESS_LENGTH = Curl.HASH_LENGTH;
+    private static final int BUNDLE_LENGTH = Curl.HASH_LENGTH;
+    private static final int SIGNATURE_LENGTH = KEY_LENGTH;
+    private static final int CHECKSUM_LENGTH = Curl.HASH_LENGTH;
+    private static final int MAX_CHECKSUM_VALUE = Curl.HASH_LENGTH / TRYTE_WIDTH * (MAX_TRYTE_VALUE - MIN_TRYTE_VALUE);
 
     public static int[] subseed(final int[] seed, int index) {
 
@@ -24,7 +26,8 @@ public class ISS {
             throw new RuntimeException("Invalid subseed index: " + index);
         }
 
-        final int[] subseedPreimage = Arrays.copyOf(seed, seed.length);
+        final int[] subseedPreimage = new int[seed.length];
+        System.arraycopy(seed, 0, subseedPreimage, 0, subseedPreimage.length);
 
         while (index-- > 0) {
 
@@ -41,184 +44,162 @@ public class ISS {
             }
         }
 
-        final int[] subseed = new int[Curl.HASH_LENGTH];
+        final int[] subseed = new int[SUBSEED_LENGTH];
 
-        final Curl hash = new Curl();
-        hash.absorb(subseedPreimage, 0, subseedPreimage.length);
-        hash.squeeze(subseed, 0, subseed.length);
+        final Curl curl = new Curl();
+        curl.absorb(subseedPreimage, 0, subseedPreimage.length);
+        curl.squeeze(subseed, 0, subseed.length);
 
         return subseed;
     }
 
-    public static int[] key(final int[] subseed, final int numberOfFragments) {
+    public static int[] key(final int[] subseed) {
 
-        if (subseed.length != Curl.HASH_LENGTH) {
+        final int[] key = new int[KEY_LENGTH];
 
-            throw new RuntimeException("Invalid subseed length: " + subseed.length);
-        }
-        if (numberOfFragments <= 0) {
-
-            throw new RuntimeException("Invalid number of key fragments: " + numberOfFragments);
-        }
-
-        final int[] key = new int[FRAGMENT_LENGTH * numberOfFragments];
-
-        final Curl hash = new Curl();
-        hash.absorb(subseed, 0, subseed.length);
-        hash.squeeze(key, 0, key.length);
+        final Curl curl = new Curl();
+        curl.absorb(subseed, 0, subseed.length);
+        curl.squeeze(key, 0, key.length);
 
         return key;
     }
 
-    public static int[] digests(final int[] key) {
+    public static int[] digest(final int[] key) {
 
-        if (key.length == 0 || key.length % FRAGMENT_LENGTH != 0) {
+        if (key.length != KEY_LENGTH) {
 
             throw new RuntimeException("Invalid key length: " + key.length);
         }
 
-        final int[] digests = new int[key.length / FRAGMENT_LENGTH * Curl.HASH_LENGTH];
+        final Curl digestCurl = new Curl();
 
-        for (int i = 0; i < key.length / FRAGMENT_LENGTH; i++) {
+        final int[] buffer = new int[Curl.HASH_LENGTH];
+        final Curl keyFragmentCurl = new Curl();
 
-            final int[] buffer = Arrays.copyOfRange(key, i * FRAGMENT_LENGTH, (i + 1) * FRAGMENT_LENGTH);
-            for (int j = 0; j < NUMBER_OF_FRAGMENT_CHUNKS; j++) {
+        for (int i = 0; i < (KEY_LENGTH - CHECKSUM_LENGTH) / Curl.HASH_LENGTH; i++) {
 
-                for (int k = MAX_TRYTE_VALUE - MIN_TRYTE_VALUE; k-- > 0; ) {
+            System.arraycopy(key, i * Curl.HASH_LENGTH, buffer, 0, buffer.length);
+            for (int j = MAX_TRYTE_VALUE - MIN_TRYTE_VALUE; j-- > 0; ) {
 
-                    final Curl hash = new Curl();
-                    hash.absorb(buffer, j * Curl.HASH_LENGTH, Curl.HASH_LENGTH);
-                    hash.squeeze(buffer, j * Curl.HASH_LENGTH, Curl.HASH_LENGTH);
-                }
+                keyFragmentCurl.reset();
+                keyFragmentCurl.absorb(buffer, 0, buffer.length);
+                keyFragmentCurl.squeeze(buffer, 0, buffer.length);
             }
-            final Curl hash = new Curl();
-            hash.absorb(buffer, 0, buffer.length);
-            hash.squeeze(digests, i * Curl.HASH_LENGTH, Curl.HASH_LENGTH);
+            digestCurl.absorb(buffer, 0, Curl.HASH_LENGTH);
         }
 
-        return digests;
+        System.arraycopy(key, KEY_LENGTH - CHECKSUM_LENGTH, buffer, 0, buffer.length);
+        for (int i = MAX_CHECKSUM_VALUE; i-- > 0; ) {
+
+            keyFragmentCurl.reset();
+            keyFragmentCurl.absorb(buffer, 0, buffer.length);
+            keyFragmentCurl.squeeze(buffer, 0, buffer.length);
+        }
+        digestCurl.absorb(buffer, 0, CHECKSUM_LENGTH);
+
+        final int[] digest = new int[DIGEST_LENGTH];
+        digestCurl.squeeze(digest, 0, digest.length);
+
+        return digest;
     }
 
     public static int[] address(final int[] digests) {
 
-        if (digests.length == 0 || digests.length % Curl.HASH_LENGTH != 0) {
+        if (digests.length % DIGEST_LENGTH != 0) {
 
             throw new RuntimeException("Invalid digests length: " + digests.length);
         }
 
-        final int[] address = new int[Curl.HASH_LENGTH];
+        final int[] address = new int[ADDRESS_LENGTH];
 
-        final Curl hash = new Curl();
-        hash.absorb(digests, 0, digests.length);
-        hash.squeeze(address, 0, address.length);
+        final Curl curl = new Curl();
+        curl.absorb(digests, 0, digests.length);
+        curl.squeeze(address, 0, address.length);
 
         return address;
     }
 
-    public static int[] normalizedBundle(final int[] bundle) {
+    public static int[] signature(final int[] bundle, final int[] key) {
 
-        if (bundle.length != Curl.HASH_LENGTH) {
+        if (bundle.length != BUNDLE_LENGTH) {
 
             throw new RuntimeException("Invalid bundle length: " + bundle.length);
         }
+        if (key.length != KEY_LENGTH) {
 
-        final int[] normalizedBundle = new int[Curl.HASH_LENGTH / TRYTE_WIDTH];
+            throw new RuntimeException("Invalid key length: " + key.length);
+        }
 
-        for (int i = 0; i < NUMBER_OF_SECURITY_LEVELS; i++) {
+        final int[] signature = new int[SIGNATURE_LENGTH];
+        System.arraycopy(key, 0, signature, 0, signature.length);
 
-            int sum = 0;
-            for (int j = i * (Curl.HASH_LENGTH / TRYTE_WIDTH / NUMBER_OF_SECURITY_LEVELS); j < (i + 1) * (Curl.HASH_LENGTH / TRYTE_WIDTH / NUMBER_OF_SECURITY_LEVELS); j++) {
+        int checksumValue = MAX_CHECKSUM_VALUE;
+        final Curl curl = new Curl();
 
-                normalizedBundle[j] = bundle[j * TRYTE_WIDTH] + bundle[j * TRYTE_WIDTH + 1] * 3 + bundle[j * TRYTE_WIDTH + 2] * 9;
-                sum += normalizedBundle[j];
-            }
-            if (sum > 0) {
+        for (int i = 0; i < (SIGNATURE_LENGTH - CHECKSUM_LENGTH) / Curl.HASH_LENGTH; i++) {
 
-                while (sum-- > 0) {
+            final int hashingChainLength = MAX_TRYTE_VALUE - (bundle[i * TRYTE_WIDTH] + bundle[i * TRYTE_WIDTH + 1] * 3 + bundle[i * TRYTE_WIDTH + 2] * 9);
+            checksumValue -= hashingChainLength;
+            for (int j = hashingChainLength; j-- > 0; ) {
 
-                    for (int j = i * (Curl.HASH_LENGTH / TRYTE_WIDTH / NUMBER_OF_SECURITY_LEVELS); j < (i + 1) * (Curl.HASH_LENGTH / TRYTE_WIDTH / NUMBER_OF_SECURITY_LEVELS); j++) {
-
-                        if (normalizedBundle[j] > MIN_TRYTE_VALUE) {
-
-                            normalizedBundle[j]--;
-
-                            break;
-                        }
-                    }
-                }
-
-            } else {
-
-                while (sum++ < 0) {
-
-                    for (int j = i * (Curl.HASH_LENGTH / TRYTE_WIDTH / NUMBER_OF_SECURITY_LEVELS); j < (i + 1) * (Curl.HASH_LENGTH / TRYTE_WIDTH / NUMBER_OF_SECURITY_LEVELS); j++) {
-
-                        if (normalizedBundle[j] < MAX_TRYTE_VALUE) {
-
-                            normalizedBundle[j]++;
-
-                            break;
-                        }
-                    }
-                }
+                curl.reset();
+                curl.absorb(signature, i * Curl.HASH_LENGTH, Curl.HASH_LENGTH);
+                curl.squeeze(signature, i * Curl.HASH_LENGTH, Curl.HASH_LENGTH);
             }
         }
 
-        return normalizedBundle;
+        while (checksumValue-- > 0) {
+
+            curl.reset();
+            curl.absorb(signature, SIGNATURE_LENGTH - CHECKSUM_LENGTH, Curl.HASH_LENGTH);
+            curl.squeeze(signature, SIGNATURE_LENGTH - CHECKSUM_LENGTH, Curl.HASH_LENGTH);
+        }
+
+        return signature;
     }
 
-    public static int[] signatureFragment(final int[] normalizedBundleFragment, final int[] keyFragment) {
+    public static int[] digest(final int[] bundle, final int[] signature) {
 
-        if (normalizedBundleFragment.length != Curl.HASH_LENGTH / TRYTE_WIDTH / NUMBER_OF_SECURITY_LEVELS) {
+        if (bundle.length != BUNDLE_LENGTH) {
 
-            throw new RuntimeException("Invalid normalized bundle fragment length: " + normalizedBundleFragment.length);
+            throw new RuntimeException("Invalid bundle length: " + bundle.length);
         }
-        if (keyFragment.length != FRAGMENT_LENGTH) {
+        if (signature.length != SIGNATURE_LENGTH) {
 
-            throw new RuntimeException("Invalid key fragment length: " + keyFragment.length);
+            throw new RuntimeException("Invalid signature length: " + signature.length);
         }
 
-        final int[] signatureFragment = Arrays.copyOf(keyFragment, keyFragment.length);
+        final Curl digestCurl = new Curl();
 
-        for (int j = 0; j < NUMBER_OF_FRAGMENT_CHUNKS; j++) {
+        final int[] buffer = new int[Curl.HASH_LENGTH];
+        int checksumValue = MAX_CHECKSUM_VALUE;
+        final Curl signatureFragmentCurl = new Curl();
 
-            for (int k = MAX_TRYTE_VALUE - normalizedBundleFragment[j]; k-- > 0; ) {
+        for (int i = 0; i < (SIGNATURE_LENGTH - CHECKSUM_LENGTH) / Curl.HASH_LENGTH; i++) {
 
-                final Curl hash = new Curl();
-                hash.absorb(signatureFragment, j * Curl.HASH_LENGTH, Curl.HASH_LENGTH);
-                hash.squeeze(signatureFragment, j * Curl.HASH_LENGTH, Curl.HASH_LENGTH);
+            System.arraycopy(signature, i * Curl.HASH_LENGTH, buffer, 0, buffer.length);
+            final int hashingChainLength = (bundle[i * TRYTE_WIDTH] + bundle[i * TRYTE_WIDTH + 1] * 3 + bundle[i * TRYTE_WIDTH + 2] * 9) - MIN_TRYTE_VALUE;
+            checksumValue -= hashingChainLength;
+            for (int j = hashingChainLength; j-- > 0; ) {
+
+                signatureFragmentCurl.reset();
+                signatureFragmentCurl.absorb(buffer, 0, buffer.length);
+                signatureFragmentCurl.squeeze(buffer, 0, buffer.length);
             }
+            digestCurl.absorb(buffer, 0, buffer.length);
         }
 
-        return signatureFragment;
-    }
+        System.arraycopy(signature, SIGNATURE_LENGTH - CHECKSUM_LENGTH, buffer, 0, buffer.length);
+        while (checksumValue-- > 0) {
 
-    public static int[] digest(final int[] normalizedBundleFragment, final int[] signatureFragment) {
-
-        if (normalizedBundleFragment.length != Curl.HASH_LENGTH / TRYTE_WIDTH / NUMBER_OF_SECURITY_LEVELS) {
-
-            throw new RuntimeException("Invalid normalized bundle fragment length: " + normalizedBundleFragment.length);
+            signatureFragmentCurl.reset();
+            signatureFragmentCurl.absorb(buffer, 0, buffer.length);
+            signatureFragmentCurl.squeeze(buffer, 0, buffer.length);
         }
-        if (signatureFragment.length != FRAGMENT_LENGTH) {
+        digestCurl.absorb(buffer, 0, buffer.length);
 
-            throw new RuntimeException("Invalid signature fragment length: " + signatureFragment.length);
-        }
-
-        final int[] digest = new int[Curl.HASH_LENGTH];
-
-        final int[] buffer = Arrays.copyOf(signatureFragment, FRAGMENT_LENGTH);
-        for (int j = 0; j < NUMBER_OF_FRAGMENT_CHUNKS; j++) {
-
-            for (int k = normalizedBundleFragment[j] - MIN_TRYTE_VALUE; k-- > 0; ) {
-
-                final Curl hash = new Curl();
-                hash.absorb(buffer, j * Curl.HASH_LENGTH, Curl.HASH_LENGTH);
-                hash.squeeze(buffer, j * Curl.HASH_LENGTH, Curl.HASH_LENGTH);
-            }
-        }
-        final Curl hash = new Curl();
-        hash.absorb(buffer, 0, buffer.length);
-        hash.squeeze(digest, 0, digest.length);
+        final int[] digest = new int[DIGEST_LENGTH];
+        digestCurl.squeeze(digest, 0, digest.length);
 
         return digest;
     }
