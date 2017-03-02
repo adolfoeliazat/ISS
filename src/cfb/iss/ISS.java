@@ -60,6 +60,12 @@ public class ISS {
         final Curl curl = new Curl();
         curl.absorb(subseed, 0, subseed.length);
         curl.squeeze(key, 0, key.length);
+        for (int offset = 0; offset < key.length; offset += Curl.HASH_LENGTH) {
+
+            curl.reset();
+            curl.absorb(key, offset, Curl.HASH_LENGTH);
+            curl.squeeze(key, offset, Curl.HASH_LENGTH);
+        }
 
         return key;
     }
