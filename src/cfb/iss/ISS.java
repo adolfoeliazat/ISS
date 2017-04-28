@@ -10,14 +10,13 @@ public class ISS {
     private static final int MIN_TRIT_VALUE = -1, MAX_TRIT_VALUE = 1;
     private static final int TRYTE_WIDTH = 3;
     private static final int MIN_TRYTE_VALUE = -13, MAX_TRYTE_VALUE = 13;
+
     private static final int SUBSEED_LENGTH = Curl.HASH_LENGTH;
-    private static final int KEY_LENGTH = (Curl.HASH_LENGTH / TRYTE_WIDTH + 1) * Curl.HASH_LENGTH;
+    private static final int KEY_LENGTH = ((Curl.HASH_LENGTH / 3) / TRYTE_WIDTH) * Curl.HASH_LENGTH;
     private static final int DIGEST_LENGTH = Curl.HASH_LENGTH;
     private static final int ADDRESS_LENGTH = Curl.HASH_LENGTH;
     private static final int BUNDLE_LENGTH = Curl.HASH_LENGTH;
     private static final int SIGNATURE_LENGTH = KEY_LENGTH;
-    private static final int CHECKSUM_LENGTH = Curl.HASH_LENGTH;
-    private static final int MAX_CHECKSUM_VALUE = Curl.HASH_LENGTH / TRYTE_WIDTH * (MAX_TRYTE_VALUE - MIN_TRYTE_VALUE);
 
     public static int[] subseed(final int[] seed, int index) {
 
@@ -81,8 +80,7 @@ public class ISS {
 
         final int[] buffer = new int[Curl.HASH_LENGTH];
         final Curl keyFragmentCurl = new Curl();
-
-        for (int i = 0; i < (KEY_LENGTH - CHECKSUM_LENGTH) / Curl.HASH_LENGTH; i++) {
+        for (int i = 0; i < KEY_LENGTH / Curl.HASH_LENGTH; i++) {
 
             System.arraycopy(key, i * Curl.HASH_LENGTH, buffer, 0, buffer.length);
             for (int j = MAX_TRYTE_VALUE - MIN_TRYTE_VALUE; j-- > 0; ) {
@@ -93,15 +91,6 @@ public class ISS {
             }
             digestCurl.absorb(buffer, 0, Curl.HASH_LENGTH);
         }
-
-        System.arraycopy(key, KEY_LENGTH - CHECKSUM_LENGTH, buffer, 0, buffer.length);
-        for (int i = MAX_CHECKSUM_VALUE; i-- > 0; ) {
-
-            keyFragmentCurl.reset();
-            keyFragmentCurl.absorb(buffer, 0, buffer.length);
-            keyFragmentCurl.squeeze(buffer, 0, buffer.length);
-        }
-        digestCurl.absorb(buffer, 0, CHECKSUM_LENGTH);
 
         final int[] digest = new int[DIGEST_LENGTH];
         digestCurl.squeeze(digest, 0, digest.length);
@@ -139,26 +128,16 @@ public class ISS {
         final int[] signature = new int[SIGNATURE_LENGTH];
         System.arraycopy(key, 0, signature, 0, signature.length);
 
-        int checksumValue = MAX_CHECKSUM_VALUE;
         final Curl curl = new Curl();
-
-        for (int i = 0; i < (SIGNATURE_LENGTH - CHECKSUM_LENGTH) / Curl.HASH_LENGTH; i++) {
+        for (int i = 0; i < SIGNATURE_LENGTH / Curl.HASH_LENGTH; i++) {
 
             final int hashingChainLength = MAX_TRYTE_VALUE - (bundle[i * TRYTE_WIDTH] + bundle[i * TRYTE_WIDTH + 1] * 3 + bundle[i * TRYTE_WIDTH + 2] * 9);
-            checksumValue -= hashingChainLength;
             for (int j = hashingChainLength; j-- > 0; ) {
 
                 curl.reset();
                 curl.absorb(signature, i * Curl.HASH_LENGTH, Curl.HASH_LENGTH);
                 curl.squeeze(signature, i * Curl.HASH_LENGTH, Curl.HASH_LENGTH);
             }
-        }
-
-        while (checksumValue-- > 0) {
-
-            curl.reset();
-            curl.absorb(signature, SIGNATURE_LENGTH - CHECKSUM_LENGTH, Curl.HASH_LENGTH);
-            curl.squeeze(signature, SIGNATURE_LENGTH - CHECKSUM_LENGTH, Curl.HASH_LENGTH);
         }
 
         return signature;
@@ -178,14 +157,11 @@ public class ISS {
         final Curl digestCurl = new Curl();
 
         final int[] buffer = new int[Curl.HASH_LENGTH];
-        int checksumValue = MAX_CHECKSUM_VALUE;
         final Curl signatureFragmentCurl = new Curl();
-
-        for (int i = 0; i < (SIGNATURE_LENGTH - CHECKSUM_LENGTH) / Curl.HASH_LENGTH; i++) {
+        for (int i = 0; i < SIGNATURE_LENGTH / Curl.HASH_LENGTH; i++) {
 
             System.arraycopy(signature, i * Curl.HASH_LENGTH, buffer, 0, buffer.length);
             final int hashingChainLength = (bundle[i * TRYTE_WIDTH] + bundle[i * TRYTE_WIDTH + 1] * 3 + bundle[i * TRYTE_WIDTH + 2] * 9) - MIN_TRYTE_VALUE;
-            checksumValue -= hashingChainLength;
             for (int j = hashingChainLength; j-- > 0; ) {
 
                 signatureFragmentCurl.reset();
@@ -194,15 +170,6 @@ public class ISS {
             }
             digestCurl.absorb(buffer, 0, buffer.length);
         }
-
-        System.arraycopy(signature, SIGNATURE_LENGTH - CHECKSUM_LENGTH, buffer, 0, buffer.length);
-        while (checksumValue-- > 0) {
-
-            signatureFragmentCurl.reset();
-            signatureFragmentCurl.absorb(buffer, 0, buffer.length);
-            signatureFragmentCurl.squeeze(buffer, 0, buffer.length);
-        }
-        digestCurl.absorb(buffer, 0, buffer.length);
 
         final int[] digest = new int[DIGEST_LENGTH];
         digestCurl.squeeze(digest, 0, digest.length);
